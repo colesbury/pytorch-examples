@@ -18,11 +18,19 @@ def main():
 def build_readme(in_path, out_path):
   if not os.path.isfile(in_path):
     return
+  contents = []
+  with open(in_path, 'r') as fin:
+    for line in fin:
+      if line.startswith('## '):
+        contents.append(line[3:-1])
+
   with open(in_path, 'r') as fin, open(out_path, 'w') as fout:
     for line in fin:
-      if not line.startswith(':INCLUDE'):
-        fout.write('%s' % line)
-      else:
+      if line.startswith(':CONTENTS'):
+        for sec in contents:
+            href = sec.lower().replace(' ','-').replace(':','')
+            fout.write("- <a href='#%s'>%s</a>\n" % (href, sec))
+      elif line.startswith(':INCLUDE'):
         include_path = line.split(' ')[1].strip()
         include_path = os.path.join(os.path.split(in_path)[0], include_path)
         fout.write('# Code in file %s\n' % include_path)
@@ -37,6 +45,8 @@ def build_readme(in_path, out_path):
               fout.write(ll)
             elif skip_next:
               skip_next = False
+      else:
+          fout.write('%s' % line)
 
 if __name__ == '__main__':
   main()

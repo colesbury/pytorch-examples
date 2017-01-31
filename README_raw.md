@@ -15,21 +15,6 @@ and the true output.
 
 :CONTENTS
 
-## Warm-up: numpy
-
-Before introducing PyTorch, we will first implement the network using numpy.
-
-Numpy provides an n-dimensional array object, and many functions for manipulating
-these arrays. Numpy is a generic framework for scientific computing; it does not
-know anything about computation graphs, or deep learning, or gradients. However
-we can easily use numpy to fit a two-layer network to random data by manually
-implementing the forward and backward passes through the network using numpy
-operations:
-
-```python
-:INCLUDE tensor/two_layer_net_numpy.py
-```
-
 ## PyTorch: Tensors
 
 Numpy is a great framework, but it cannot utilize GPUs to accelerate its
@@ -112,7 +97,7 @@ define our two-layer network as a **Module** containing several submodules.
 handled automatically by autograd.
 
 ```python
-:INCLUDE nn/two_layer_net_module.py
+:INCLUDE nn/two_layer_net_nn.py
 ```
 
 ## PyTorch: optim
@@ -134,6 +119,7 @@ will optimize the model using the Adam algorithm provided by the `optim` package
 
 ## PyTorch: RNNs
 
+TODO
 
 ## Data Loading
 We often want to load inputs and targets from files, instead of using random inputs. We also often want to do any preprocessing in the background to avoid slowing down the training loop. PyTorch provides two classes `torch.utils.data.Dataset` and `torch.utils.data.DataLoader` to help with data loading. `DataLoader` implements batching and shuffling. It will load the data in background processes if you set `num_workers`.
@@ -145,6 +131,117 @@ We often want to load inputs and targets from files, instead of using random inp
 PyTorch also provides a number of implementations for common datasets in the `vision` and `text` packages:
 - Vision: MNIST, LSUN, COCO, CIFAR, and generic "ImageFolder"
 - Text: SNLI, SST, and generic "Translation" and "LanguageModeling"
+
+## PyTorch for Torch Users
+
+The non-autograd parts of pytorch will be quite familiar to torch users, but there are
+a few important changes to be aware of:
+
+**Inplace / Out-of-place**
+
+The first difference is that ALL operations on the tensor that operate in-place on it will have an **_** postfix.
+For example, `add` is the out-of-place version, and `add_` is the in-place version.
+
+```python
+a.fill_(3.5)
+# a has now been filled with the value 3.5
+
+b = a.add(4.0)
+# a is still filled with 3.5
+# new tensor b is returned with values 3.5 + 4.0 = 7.5
+```
+
+Some operations like narrow do not have in-place versions, and hence, `.narrow_` does not exist. 
+Similarly, some operations like `fill_` do not have an out-of-place version, so `.fill` does not exist.
+
+ **Zero Indexing**
+
+Another difference is that Tensors are zero-indexed. (Torch tensors are one-indexed)
+
+```python
+b = a[0,3] # select 1st row, 4th column from a
+```
+
+Tensors can be also indexed with Python's slicing
+
+```python
+b = a[:,3:5] # selects all rows, columns 3 to 5
+```
+
+**No camel casing**
+
+The next small difference is that all functions are now NOT camelCase anymore.
+For example `indexAdd` is now called `index_add_`
+
+```python
+x = torch.ones(5, 5)
+print(x)
+z = torch.Tensor(5, 2)
+z[:,0] = 10
+z[:,1] = 100
+print(z)
+x.index_add_(1, torch.LongTensor([4,0]), z)
+print(x)
+```
+
+**Numpy Bridge**
+
+Converting a torch Tensor to a numpy array and vice versa is a breeze.
+The torch Tensor and numpy array will share their underlying memory, and changing one will change the other.
+
+*Converting torch Tensor to numpy Array*
+
+```python
+a = torch.ones(5)
+print(a)
+b = a.numpy()
+print(b)
+a.add_(1)
+print(a)
+print(b) # see how the numpy array changed in value
+```
+
+*Converting numpy Array to torch Tensor*
+
+```python
+import numpy as np
+a = np.ones(5)
+b = torch.DoubleTensor(a)
+np.add(a, 1, out=a)
+print(a)
+print(b) # see how changing the np array changed the torch Tensor automatically
+```
+
+All the Tensors on the CPU except a CharTensor support converting to NumPy and back.
+
+**CUDA Tensors**
+
+CUDA Tensors are nice and easy in pytorch, and they are much more consistent as well.
+Transfering a CUDA tensor from the CPU to GPU will retain it's type.
+
+```python
+# creates a LongTensor and transfers it 
+# to GPU as torch.cuda.LongTensor
+a = torch.LongTensor(10).fill_(3).cuda()
+print(type(a))
+b = a.cpu()
+# transfers it to CPU, back to 
+# being a torch.LongTensor
+```
+
+**Multiprocessing vs multithreading**
+
+In Lua, CPU parallelism for data loading and HOGWILD typically used multithreading
+via the torch `threads` package. In Python, CPU parallelism is achieved through the
+torch `multiprocessing` package. This is a simple extension of the Python `multiprocessing`
+package, that causes tensor storages to be passed between processes in shared memory.
+
+Unlike the torch threads library, arbitrary objects (e.g. whole models) can be shared
+between Python processes for HOGWILD training.
+
+The [MNIST HOGWILD example](https://github.com/pytorch/examples/blob/master/mnist_hogwild/main.py) and the
+[PyTorch data loader](https://github.com/pytorch/pytorch/blob/master/torch/utils/data/dataloader.py)
+are good examples of how to use torch multiprocessing.
 
 # Advanced Topics 
 
@@ -202,11 +299,11 @@ fit a simple two-layer net:
 :INCLUDE autograd/tf_two_layer_net.py
 ```
 
-# HOGWILD
+# PyTorch: HOGWILD
 
-FIXME
+TODO @sgross
 
-## PyTorch: Control Flow + Weight Sharing
+## PyTorch: Control Flow and Weight Sharing
 As an example of dynamic graphs and weight sharing, we implement a very strange
 model: a fully-connected ReLU network that on each forward pass chooses a random
 number between 1 and 4 and uses that many hidden layers, reusing the same weights

@@ -12,66 +12,17 @@ fit random data by minimizing the Euclidean distance between the network output
 and the true output.
 
 ### Table of Contents
-- <a href='#warm-up-numpy'>Warm-up: numpy</a>
+
 - <a href='#pytorch-tensors'>PyTorch: Tensors</a>
 - <a href='#pytorch-variables-and-autograd'>PyTorch: Variables and autograd</a>
-- <a href='#pytorch-defining-new-autograd-functions'>PyTorch: Defining new autograd functions</a>
-- <a href='#tensorflow-static-graphs'>TensorFlow: Static Graphs</a>
 - <a href='#pytorch-nn'>PyTorch: nn</a>
 - <a href='#pytorch-optim'>PyTorch: optim</a>
-- <a href='#pytorch-custom-nn-modules'>PyTorch: Custom nn Modules</a>
-- <a href='#pytorch-control-flow--weight-sharing'>PyTorch: Control Flow and Weight Sharing</a>
-
-## Warm-up: numpy
-
-Before introducing PyTorch, we will first implement the network using numpy.
-
-Numpy provides an n-dimensional array object, and many functions for manipulating
-these arrays. Numpy is a generic framework for scientific computing; it does not
-know anything about computation graphs, or deep learning, or gradients. However
-we can easily use numpy to fit a two-layer network to random data by manually
-implementing the forward and backward passes through the network using numpy
-operations:
-
-```python
-# Code in file tensor/two_layer_net_numpy.py
-import numpy as np
-
-# N is batch size; D_in is input dimension;
-# H is hidden dimension; D_out is output dimension.
-N, D_in, H, D_out = 64, 1000, 100, 10
-
-# Create random input and output data
-x = np.random.randn(N, D_in)
-y = np.random.randn(N, D_out)
-
-# Randomly initialize weights
-w1 = np.random.randn(D_in, H)
-w2 = np.random.randn(H, D_out)
-
-learning_rate = 1e-6
-for t in range(500):
-  # Forward pass: compute predicted y
-  h = x.dot(w1)
-  h_relu = np.maximum(h, 0)
-  y_pred = h_relu.dot(w2)
-  
-  # Compute and print loss
-  loss = np.square(y_pred - y).sum()
-  print(t, loss)
-  
-  # Backprop to compute gradients of w1 and w2 with respect to loss
-  grad_y_pred = 2.0 * (y_pred - y)
-  grad_w2 = h_relu.T.dot(grad_y_pred)
-  grad_h_relu = grad_y_pred.dot(w2.T)
-  grad_h = grad_h_relu.copy()
-  grad_h[h < 0] = 0
-  grad_w1 = x.T.dot(grad_h)
- 
-  # Update weights
-  w1 -= learning_rate * grad_w1
-  w2 -= learning_rate * grad_w2
-```
+- <a href='#pytorch-rnns'>PyTorch: RNNs</a>
+- <a href='#pytorch-data-loading'>PyTorch: Data Loading</a>
+- <a href='#pytorch-for-torch-users'>PyTorch for Torch Users</a>
+- <a href='#pytorch-defining-new-autograd-functions'>PyTorch: Defining new autograd functions</a>
+- <a href='#tensorflow-static-graphs'>TensorFlow: Static Graphs</a>
+- <a href='#pytorch-control-flow-and-weight-sharing'>PyTorch: Control Flow and Weight Sharing</a>
 
 ## PyTorch: Tensors
 
@@ -224,6 +175,276 @@ for t in range(500):
   w2.data -= learning_rate * w2.grad.data
 ```
 
+## PyTorch: nn
+Computational graphs and autograd are a very powerful paradigm for defining
+complex operators and automatically taking derivatives; however for large
+neural networks raw autograd can be a bit too low-level.
+
+When building neural networks we frequently think of arranging the computation
+into **modules**, some of which have **learnable parameters** which will be
+optimized during learning.
+
+In PyTorch, the `nn` package defines a set of
+**Modules**, which are roughly equivalent to neural network layers. A Module receives
+input Variables and computes output Variables, but may also hold internal state such as
+Variables containing learnable parameters. The `nn` package also defines a set of useful
+loss functions that are commonly used when training neural networks.
+
+The **Module** class is also used to assemble layers into larger structures. Here we
+define our two-layer network as a **Module** containing several submodules.
+**Module** must only implement the `forward` method; the backwards computation is
+handled automatically by autograd.
+
+```python
+# Code in file nn/two_layer_net_nn.py
+import torch
+import torch.nn as nn
+from torch.autograd import Variable
+
+# N is batch size; D_in is input dimension;
+# H is hidden dimension; D_out is output dimension.
+N, D_in, H, D_out = 64, 1000, 100, 10
+
+# Create random Tensors to hold inputs and outputs, and wrap them in Variables.
+x = Variable(torch.randn(N, D_in))
+y = Variable(torch.randn(N, D_out), requires_grad=False)
+
+class TwoLayerNet(nn.Module):
+  def __init__(self, D_in, H, D_out):
+    """
+    In the constructor we instantiate two nn.Linear modules and assign them as
+    member variables.
+    """
+    super(TwoLayerNet, self).__init__()
+    self.linear1 = nn.Linear(D_in, H)
+    self.linear2 = nn.Linear(H, D_out)
+
+  def forward(self, x):
+    """
+    In the forward function we accept a Variable of input data and we must return
+    a Variable of output data. We can use Modules defined in the constructor as
+    well as arbitrary operators on Variables.
+    """
+    h_relu = self.linear1(x).clamp(min=0)
+    y_pred = self.linear2(h_relu)
+    return y_pred
+
+# The nn package also contains definitions of popular loss functions; in this
+# case we will use Mean Squared Error (MSE) as our loss function.
+loss_fn = nn.MSELoss(size_average=False)
+
+learning_rate = 1e-4
+for t in range(500):
+  # Forward pass: compute predicted y by passing x to the model. Module objects
+  # override the __call__ operator so you can call them like functions. When
+  # doing so you pass a Variable of input data to the Module and it produces
+  # a Variable of output data.
+  y_pred = model(x)
+
+  # Compute and print loss. We pass Variables containing the predicted and true
+  # values of y, and the loss function returns a Variable containing the loss.
+  loss = loss_fn(y_pred, y)
+  print(t, loss.data[0])
+  
+  # Zero the gradients before running the backward pass.
+  model.zero_grad()
+
+  # Backward pass: compute gradient of the loss with respect to all the learnable
+  # parameters of the model. Internally, the parameters of each Module are stored
+  # in Variables with requires_grad=True, so this call will compute gradients for
+  # all learnable parameters in the model.
+  loss.backward()
+
+  # Update the weights using gradient descent. Each parameter is a Variable, so
+  # we can access its data and gradients like we did before.
+  for param in model.parameters():
+    param.data -= learning_rate * param.grad.data
+```
+
+## PyTorch: optim
+Up to this point we have updated the weights of our models by manually mutating the
+`.data` member for Variables holding learnable parameters. This is not a huge burden
+for simple optimization algorithms like stochastic gradient descent, but in practice
+we often train neural networks using more sophisiticated optimizers like AdaGrad,
+RMSProp, Adam, etc.
+
+The `optim` package in PyTorch abstracts the idea of an optimization algorithm and
+provides implementations of commonly used optimization algorithms.
+
+In this example we will use the `nn` package to define our model as before, but we
+will optimize the model using the Adam algorithm provided by the `optim` package:
+
+## PyTorch: RNNs
+
+TODO
+
+## PyTorch: Data Loading
+
+
+```python
+# Code in file nn/two_layer_net_optim.py
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.autograd import Variable
+
+# N is batch size; D_in is input dimension;
+# H is hidden dimension; D_out is output dimension.
+N, D_in, H, D_out = 64, 1000, 100, 10
+
+# Create random Tensors to hold inputs and outputs, and wrap them in Variables.
+x = Variable(torch.randn(N, D_in))
+y = Variable(torch.randn(N, D_out), requires_grad=False)
+
+class TwoLayerNet(nn.Module):
+  def __init__(self, D_in, H, D_out):
+    super(TwoLayerNet, self).__init__()
+    self.linear1 = nn.Linear(D_in, H)
+    self.linear2 = nn.Linear(H, D_out)
+
+  def forward(self, x):
+    h_relu = self.linear1(x).clamp(min=0)
+    y_pred = self.linear2(h_relu)
+    return y_pred
+
+
+model = TwoLayerNet(D_in, H, D_out)
+loss_fn = nn.MSELoss(size_average=False)
+
+# The optim package contains a number of data loaders, such as
+# SGD, Adagrad, Adadelta, and Adam. You can optimize different parts
+# of the model with different optimizers by passing a subset of
+# model.parameters() to each optimizer
+optimizer = optim.SGD(model.parameters(), lr=1e-4)
+for t in range(500):
+  y_pred = model(x)
+
+  loss = loss_fn(y_pred, y)
+  print(t, loss.data[0])
+  
+  model.zero_grad()
+
+  loss.backward()
+
+  # Performs one SGD step on the parameters.
+  # Since the gradients are stored inside the parameter Variables,
+  # `step()` requires no arguments.
+  optimizer.step()
+```
+
+## PyTorch for Torch Users
+
+The non-autograd parts of pytorch will be quite familiar to torch users, but there are
+a few important changes to be aware of:
+
+**Inplace / Out-of-place**
+
+The first difference is that ALL operations on the tensor that operate in-place on it will have an **_** postfix.
+For example, `add` is the out-of-place version, and `add_` is the in-place version.
+
+```python
+a.fill_(3.5)
+# a has now been filled with the value 3.5
+
+b = a.add(4.0)
+# a is still filled with 3.5
+# new tensor b is returned with values 3.5 + 4.0 = 7.5
+```
+
+Some operations like narrow do not have in-place versions, and hence, `.narrow_` does not exist. 
+Similarly, some operations like `fill_` do not have an out-of-place version, so `.fill` does not exist.
+
+ **Zero Indexing**
+
+Another difference is that Tensors are zero-indexed. (Torch tensors are one-indexed)
+
+```python
+b = a[0,3] # select 1st row, 4th column from a
+```
+
+Tensors can be also indexed with Python's slicing
+
+```python
+b = a[:,3:5] # selects all rows, columns 3 to 5
+```
+
+**No camel casing**
+
+The next small difference is that all functions are now NOT camelCase anymore.
+For example `indexAdd` is now called `index_add_`
+
+```python
+x = torch.ones(5, 5)
+print(x)
+z = torch.Tensor(5, 2)
+z[:,0] = 10
+z[:,1] = 100
+print(z)
+x.index_add_(1, torch.LongTensor([4,0]), z)
+print(x)
+```
+
+**Numpy Bridge**
+
+Converting a torch Tensor to a numpy array and vice versa is a breeze.
+The torch Tensor and numpy array will share their underlying memory, and changing one will change the other.
+
+*Converting torch Tensor to numpy Array*
+
+```python
+a = torch.ones(5)
+print(a)
+b = a.numpy()
+print(b)
+a.add_(1)
+print(a)
+print(b) # see how the numpy array changed in value
+```
+
+*Converting numpy Array to torch Tensor*
+
+```python
+import numpy as np
+a = np.ones(5)
+b = torch.DoubleTensor(a)
+np.add(a, 1, out=a)
+print(a)
+print(b) # see how changing the np array changed the torch Tensor automatically
+```
+
+All the Tensors on the CPU except a CharTensor support converting to NumPy and back.
+
+**CUDA Tensors**
+
+CUDA Tensors are nice and easy in pytorch, and they are much more consistent as well.
+Transfering a CUDA tensor from the CPU to GPU will retain it's type.
+
+```python
+# creates a LongTensor and transfers it 
+# to GPU as torch.cuda.LongTensor
+a = torch.LongTensor(10).fill_(3).cuda()
+print(type(a))
+b = a.cpu()
+# transfers it to CPU, back to 
+# being a torch.LongTensor
+```
+
+**Multiprocessing vs multithreading**
+
+In Lua, CPU parallelism for data loading and HOGWILD typically used multithreading
+via the torch `threads` package. In Python, CPU parallelism is achieved through the
+torch `multiprocessing` package. This is a simple extension of the Python `multiprocessing`
+package, that causes tensor storages to be passed between processes in shared memory.
+
+Unlike the torch threads library, arbitrary objects (e.g. whole models) can be shared
+between Python processes for HOGWILD training.
+
+The [MNIST HOGWILD example](https://github.com/pytorch/examples/blob/master/mnist_hogwild/main.py) and the
+[PyTorch data loader](https://github.com/pytorch/pytorch/blob/master/torch/utils/data/dataloader.py)
+are good examples of how to use torch multiprocessing.
+
+# Advanced Topics 
+
 ## PyTorch: Defining new autograd functions
 Under the hood, each primitive autograd operator is really two functions that
 operate on Tensors. The **forward** function computes output Tensors from input
@@ -310,6 +531,7 @@ for t in range(500):
   w1.data -= learning_rate * w1.grad.data
   w2.data -= learning_rate * w2.grad.data
 ```
+
 
 ## TensorFlow: Static Graphs
 PyTorch autograd looks a lot like TensorFlow: in both frameworks we define
@@ -404,213 +626,11 @@ with tf.Session() as sess:
     print(loss_value)
 ```
 
+# PyTorch: HOGWILD
 
-## PyTorch: nn
-Computational graphs and autograd are a very powerful paradigm for defining
-complex operators and automatically taking derivatives; however for large
-neural networks raw autograd can be a bit too low-level.
+TODO @sgross
 
-When building neural networks we frequently think of arranging the computation
-into **layers**, some of which have **learnable parameters** which will be
-optimized during learning.
-
-In TensorFlow, packages like [Keras](https://github.com/fchollet/keras),
-[TensorFlow-Slim](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/contrib/slim),
-and [TFLearn](http://tflearn.org/) provide higher-level abstractions over
-raw computational graphs that are useful for building neural networks.
-
-In PyTorch, the `nn` package serves this same purpose. The `nn` package defines a set of
-**Modules**, which are roughly equivalent to neural network layers. A Module receives
-input Variables and computes output Variables, but may also hold internal state such as
-Variables containing learnable parameters. The `nn` package also defines a set of useful
-loss functions that are commonly used when training neural networks.
-
-In this example we use the `nn` package to implement our two-layer network:
-
-```python
-# Code in file nn/two_layer_net_nn.py
-import torch
-from torch.autograd import Variable
-
-# N is batch size; D_in is input dimension;
-# H is hidden dimension; D_out is output dimension.
-N, D_in, H, D_out = 64, 1000, 100, 10
-
-# Create random Tensors to hold inputs and outputs, and wrap them in Variables.
-x = Variable(torch.randn(N, D_in))
-y = Variable(torch.randn(N, D_out), requires_grad=False)
-
-# Use the nn package to define our model as a sequence of layers. nn.Sequential
-# is a Module which contains other Modules, and applies them in sequence to
-# produce its output. Each Linear Module computes output from input using a
-# linear function, and holds internal Variables for its weight and bias.
-model = torch.nn.Sequential(
-          torch.nn.Linear(D_in, H),
-          torch.nn.ReLU(),
-          torch.nn.Linear(H, D_out),
-        )
-
-# The nn package also contains definitions of popular loss functions; in this
-# case we will use Mean Squared Error (MSE) as our loss function.
-loss_fn = torch.nn.MSELoss(size_average=False)
-
-learning_rate = 1e-4
-for t in range(500):
-  # Forward pass: compute predicted y by passing x to the model. Module objects
-  # override the __call__ operator so you can call them like functions. When
-  # doing so you pass a Variable of input data to the Module and it produces
-  # a Variable of output data.
-  y_pred = model(x)
-
-  # Compute and print loss. We pass Variables containing the predicted and true
-  # values of y, and the loss function returns a Variable containing the loss.
-  loss = loss_fn(y_pred, y)
-  print(t, loss.data[0])
-  
-  # Zero the gradients before running the backward pass.
-  model.zero_grad()
-
-  # Backward pass: compute gradient of the loss with respect to all the learnable
-  # parameters of the model. Internally, the parameters of each Module are stored
-  # in Variables with requires_grad=True, so this call will compute gradients for
-  # all learnable parameters in the model.
-  loss.backward()
-
-  # Update the weights using gradient descent. Each parameter is a Variable, so
-  # we can access its data and gradients like we did before.
-  for param in model.parameters():
-    param.data -= learning_rate * param.grad.data
-```
-
-
-## PyTorch: optim
-Up to this point we have updated the weights of our models by manually mutating the
-`.data` member for Variables holding learnable parameters. This is not a huge burden
-for simple optimization algorithms like stochastic gradient descent, but in practice
-we often train neural networks using more sophisiticated optimizers like AdaGrad,
-RMSProp, Adam, etc.
-
-The `optim` package in PyTorch abstracts the idea of an optimization algorithm and
-provides implementations of commonly used optimization algorithms.
-
-In this example we will use the `nn` package to define our model as before, but we
-will optimize the model using the Adam algorithm provided by the `optim` package:
-
-```python
-# Code in file nn/two_layer_net_optim.py
-import torch
-from torch.autograd import Variable
-
-# N is batch size; D_in is input dimension;
-# H is hidden dimension; D_out is output dimension.
-N, D_in, H, D_out = 64, 1000, 100, 10
-
-# Create random Tensors to hold inputs and outputs, and wrap them in Variables.
-x = Variable(torch.randn(N, D_in))
-y = Variable(torch.randn(N, D_out), requires_grad=False)
-
-# Use the nn package to define our model and loss function.
-model = torch.nn.Sequential(
-          torch.nn.Linear(D_in, H),
-          torch.nn.ReLU(),
-          torch.nn.Linear(H, D_out),
-        )
-loss_fn = torch.nn.MSELoss(size_average=False)
-
-# Use the optim package to define an Optimizer that will update the weights of
-# the model for us. Here we will use Adam; the optim package contains many other
-# optimization algoriths. The first argument to the Adam constructor tells the
-# optimizer which Variables it should update.
-learning_rate = 1e-4
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-for t in range(500):
-  # Forward pass: compute predicted y by passing x to the model.
-  y_pred = model(x)
-
-  # Compute and print loss.
-  loss = loss_fn(y_pred, y)
-  print(t, loss.data[0])
-  
-  # Before the backward pass, use the optimizer object to zero all of the
-  # gradients for the variables it will update (which are the learnable weights
-  # of the model)
-  optimizer.zero_grad()
-
-  # Backward pass: compute gradient of the loss with respect to model parameters
-  loss.backward()
-
-  # Calling the step function on an Optimizer makes an update to its parameters
-  optimizer.step()
-```
-
-
-## PyTorch: Custom nn Modules
-Sometimes you will want to specify models that are more complex than a sequence of
-existing Modules; for these cases you can define your own Modules by subclassing
-`nn.Module` and defining a `forward` which receives input Variables and produces
-output Variables using other modules or other autograd operations on Variables.
-
-In this example we implement our two-layer network as a custom Module subclass:
-
-```python
-# Code in file nn/two_layer_net_module.py
-import torch
-from torch.autograd import Variable
-
-class TwoLayerNet(torch.nn.Module):
-  def __init__(self, D_in, H, D_out):
-    """
-    In the constructor we instantiate two nn.Linear modules and assign them as
-    member variables.
-    """
-    super(TwoLayerNet, self).__init__()
-    self.linear1 = torch.nn.Linear(D_in, H)
-    self.linear2 = torch.nn.Linear(H, D_out)
-
-  def forward(self, x):
-    """
-    In the forward function we accept a Variable of input data and we must return
-    a Variable of output data. We can use Modules defined in the constructor as
-    well as arbitrary operators on Variables.
-    """
-    h_relu = self.linear1(x).clamp(min=0)
-    y_pred = self.linear2(h_relu)
-    return y_pred
-
-
-# N is batch size; D_in is input dimension;
-# H is hidden dimension; D_out is output dimension.
-N, D_in, H, D_out = 64, 1000, 100, 10
-
-# Create random Tensors to hold inputs and outputs, and wrap them in Variables
-x = Variable(torch.randn(N, D_in))
-y = Variable(torch.randn(N, D_out), requires_grad=False)
-
-# Construct our model by instantiating the class defined above
-model = TwoLayerNet(D_in, H, D_out)
-
-# Construct our loss function and an Optimizer. The call to model.parameters()
-# in the SGD constructor will contain the learnable parameters of the two
-# nn.Linear modules which are members of the model.
-criterion = torch.nn.MSELoss(size_average=False)
-optimizer = torch.optim.SGD(model.parameters(), lr=1e-4)
-for t in range(500):
-  # Forward pass: Compute predicted y by passing x to the model
-  y_pred = model(x)
-
-  # Compute and print loss
-  loss = criterion(y_pred, y)
-  print(t, loss.data[0])
-
-  # Zero gradients, perform a backward pass, and update the weights.
-  optimizer.zero_grad()
-  loss.backward()
-  optimizer.step()
-
-```
-
-
-## PyTorch: Control Flow + Weight Sharing
+## PyTorch: Control Flow and Weight Sharing
 As an example of dynamic graphs and weight sharing, we implement a very strange
 model: a fully-connected ReLU network that on each forward pass chooses a random
 number between 1 and 4 and uses that many hidden layers, reusing the same weights

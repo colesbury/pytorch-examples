@@ -1,16 +1,14 @@
 import torch
+import torch.nn as nn
 from torch.autograd import Variable
 
 """
 A fully-connected ReLU network with one hidden layer, trained to predict y from x
 by minimizing squared Euclidean distance.
 
-This implementation uses the nn package from PyTorch to build the network.
-PyTorch autograd makes it easy to define computational graphs and take gradients,
-but raw autograd can be a bit too low-level for defining complex neural networks;
-this is where the nn package can help. The nn package defines a set of Modules,
-which you can think of as a neural network layer that has produces output from
-input and may have some trainable weights.
+This implementation defines the model as a custom Module subclass. Whenever you
+want a model more complex than a simple sequence of existing Modules you will
+need to define your model this way.
 """
 
 # N is batch size; D_in is input dimension;
@@ -21,19 +19,29 @@ N, D_in, H, D_out = 64, 1000, 100, 10
 x = Variable(torch.randn(N, D_in))
 y = Variable(torch.randn(N, D_out), requires_grad=False)
 
-# Use the nn package to define our model as a sequence of layers. nn.Sequential
-# is a Module which contains other Modules, and applies them in sequence to
-# produce its output. Each Linear Module computes output from input using a
-# linear function, and holds internal Variables for its weight and bias.
-model = torch.nn.Sequential(
-          torch.nn.Linear(D_in, H),
-          torch.nn.ReLU(),
-          torch.nn.Linear(H, D_out),
-        )
+class TwoLayerNet(nn.Module):
+  def __init__(self, D_in, H, D_out):
+    """
+    In the constructor we instantiate two nn.Linear modules and assign them as
+    member variables.
+    """
+    super(TwoLayerNet, self).__init__()
+    self.linear1 = nn.Linear(D_in, H)
+    self.linear2 = nn.Linear(H, D_out)
+
+  def forward(self, x):
+    """
+    In the forward function we accept a Variable of input data and we must return
+    a Variable of output data. We can use Modules defined in the constructor as
+    well as arbitrary operators on Variables.
+    """
+    h_relu = self.linear1(x).clamp(min=0)
+    y_pred = self.linear2(h_relu)
+    return y_pred
 
 # The nn package also contains definitions of popular loss functions; in this
 # case we will use Mean Squared Error (MSE) as our loss function.
-loss_fn = torch.nn.MSELoss(size_average=False)
+loss_fn = nn.MSELoss(size_average=False)
 
 learning_rate = 1e-4
 for t in range(500):
